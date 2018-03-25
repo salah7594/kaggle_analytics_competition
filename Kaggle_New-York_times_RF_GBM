@@ -1,0 +1,349 @@
+
+
+```{r}
+############################
+#########"LIBRARY"###########
+##############################
+library(tm) # Librairie de text mining
+library(SnowballC) # Pour le text stemming
+library(wordcloud) # Générateur de word-cloud 
+library(RColorBrewer) # Palettes de couleurs
+library(ggplot2) # Pour les graphs visualisation
+library(randomForest) # Random Forest
+library(caret) # Pour la Cross Validation
+library(ROCR) # Pour le calcul de AUC
+library(dplyr)
+library(tidytext)
+
+```
+
+```{r}
+# Lecture des données
+Train = read.csv("Train.csv", stringsAsFactors=FALSE)
+Test = read.csv("Test.csv", stringsAsFactors=FALSE)
+
+names(Train)
+names(Test)
+```
+
+```{r}
+####### Rassemblement des données#########
+#On rassemble les donnée pour mieux les spliter par la suite#######
+Rassemblage = function(Train, Test){
+  Alldf = Train
+  yTrain = Alldf$popular
+  Alldf$popular = NULL
+  Alldf$Comments = NULL
+  Alldf$Recommendations = NULL
+  Alldf = rbind(Alldf,Test)
+  return(list("Alldf"=Alldf, "yTrain"=yTrain)) 
+}
+```
+```{r}
+# Etude des news Popular
+# On fait un subset pour ne garder que les news popular
+PopularNews = subset(Train, popular == 1)
+# il y a 1378 artciles populaire sur les 15205 articles contenu dans Train
+#####"HEADLINE"#########
+CorpusHeadline = Corpus(VectorSource(PopularNews$Headline))
+# Supprimer les majuscules dc tt en minuscule
+CorpusHeadline = tm_map(CorpusHeadline, tolower)
+# Supprimer les nombres
+CorpusHeadline = tm_map(CorpusHeadline, removeNumbers)
+# Supprimer les espaces en trop
+CorpusHeadline = tm_map(CorpusHeadline, stripWhitespace)
+# Supprimer les mots non essentiel anglais
+CorpusHeadline = tm_map(CorpusHeadline, removeWords, stopwords("english"))
+dtm <- TermDocumentMatrix(CorpusHeadline)
+m <- as.matrix(dtm)
+v <- sort(rowSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+head(d, 14)
+```
+
+```{r}
+######"Traitement de donnée"####
+###Fonction qui ajoute des variables explicatif#####
+addVariables = function(data){
+  df = data
+  # Formatage de l'heure
+  PubDate = strptime(df$PubDate, "%Y-%m-%d %H:%M:%S")
+  # Ajout variable Heure et numéro jour
+  df$PubWeekday = PubDate$wday
+  df$PubHour = PubDate$hour
+  df$PubMonth = PubDate$month
+  df$PubDate = NULL
+  
+  # Fonction log pour WordCount
+  df$WordCountLog = log(1+df$WordCount)
+  df$WordCount = NULL
+  
+  # Identifier si le Headline est une question
+  # Ajout de Question => variable catégoriel 
+  df$Headline = tolower(df$Headline)
+  df$Question = as.numeric(grepl('\\?|what|why|how|should|when|can', df$Headline, perl = T))
+  
+  # Mots clés sensationnel dans le Headlines
+  df$Sensationnel = as.numeric(grepl('\\?|obama|scandal|gun|climate|report|new|can|ask|republicans', df$Headline, perl = T))
+  
+  df$Interesting = as.numeric(grepl('\\ISIS|Bowl|rumors|oppression|slavery|protest|rape|victims|obama|scandal|gun|climate|report|new|can|ask|republicans', df$Abstract, perl = T))
+  
+  
+  # Mise en factors
+  df$NewsDesk = as.factor(df$NewsDesk)
+  df$SectionName = as.factor(df$SectionName)
+  df$SubsectionName = as.factor(df$SubsectionName)
+  
+  return(df)
+}
+
+
+```
+
+```{r}
+# Text Mining #######
+### Avec la librairy TM ######
+corpusFct = function(x, l, sparsity=0.9) {
+  corpus = Corpus(VectorSource(x))
+  corpus = tm_map(corpus, tolower)  
+  #corpus = tm_map(corpus, PlainTextDocument)  
+  corpus = tm_map(corpus, removePunctuation)
+  corpus = tm_map(corpus, removeNumbers)   
+  corpus = tm_map(corpus, removeWords, stopwords("english"))
+  corpus = tm_map(corpus, stripWhitespace)
+  corpus = tm_map(corpus, stemDocument)
+  dtm = DocumentTermMatrix(corpus)
+  sparse = removeSparseTerms(dtm, sparsity)
+  words = as.data.frame(as.matrix(sparse))
+  colnames(words) = make.names(colnames(words))
+  colnames(words) = paste(l, colnames(words), sep=ifelse(l == '', '', '_')) 
+  return(words)
+}
+
+```
+
+```{r}
+### Fonction qui applique le Texte Mining ####
+
+textTM = function(data) {
+  df = data
+  
+  AbstractWords = corpusFct(df$Abstract, 'A', 0.98) # Nommage au cas de doublons
+  HeadlineWords = corpusFct(df$Headline, 'H', 0.99)
+  NewsDeskWords = corpusFct(df$NewsDesk, 'N', 0.99)
+  SectionNameWords = corpusFct(df$SectionName, 'S', 0.99)
+  SubsectionNameWords = corpusFct(df$SubsectionName, 'SS', 0.99)
+  
+# e.g: removeSparseTerms(my_dtm, sparse = 0.90) means remove all terms in the corpus whose sparsity is greater than 90%.
+# 
+# For example, a term that appears say just 4 times in a corpus of say size 1000, will have a frequency of appearance of 0.004 =4/1000.
+# 
+# This term's sparsity will be (1000-4)/1000 = 1- 0.004 = 0.996 = 99.6%.
+# Therefore if sparsity threshold is set to sparse = 0.90, this term will be removed as its sparsity (0.996) is greater than the upper bound sparsity (0.90).
+# However, if sparsity threshold is set to sparse = 0.999, this term will not be removed as its sparsity (0.996) is lower than the upper bound sparsity (0.999).
+#https://stackoverflow.com/questions/28763389/how-does-the-removesparseterms-in-r-work
+  
+  
+  #AbstractWords$UniqueID = df$UniqueID
+  #df = merge(df, AbstractWords, by="UniqueID")
+  #df$Abstract = NULL
+  
+  df = cbind(df, AbstractWords)
+  df$Abstract = NULL
+  
+  df = cbind(df, HeadlineWords)
+  df$Headline = NULL
+  
+  df = cbind(df, NewsDeskWords)
+  df$News = NULL
+  
+  df = cbind(df, SectionNameWords)
+  df$SectionName = NULL
+  
+  df = cbind(df, SubsectionNameWords)
+  df$SubsectionName = NULL
+  
+  return(df)
+}
+
+```
+```{r}
+out = Rassemblage(Train,Test)
+news = out$Alldf
+Popular = out$y
+news = addVariables(news)
+Popular = as.factor(Popular)
+#newsAbstract = corpusFct(news$Abstract, 'A', 0.96)()
+#news = cbind(news, newsAbstract)
+#news$Abstract = NULL
+news = textTM(news)
+news$Snippet = NULL
+news$NewsDesk = NULL
+news$SectionName = NULL
+news$SubsectionName = NULL
+
+```
+
+```{r}
+# On split les données
+splitTrainTest = function(df, y, yname='y') {
+  train = head(df, length(y))
+  train[, yname] = y
+  test = tail(df, nrow(df) - length(y))
+  return(list("train"=train, "test"=test))
+}
+
+```
+
+```{r}
+o = splitTrainTest(news, Popular, "Popular")
+news.train = o$train
+news.test = o$test
+
+```
+```{r}
+
+```
+
+```{r}
+####### REGRESSION LOGISTIQUE #########
+log = glm(Popular ~. - UniqueID, data=news.train, family=binomial)
+pred.test = predict(log, newdata=news.test, type="response")
+MySubmission = data.frame(UniqueID = Test$UniqueID, Probability1 = pred.test)
+write.csv(MySubmission, "TheREG.csv", row.names=FALSE)
+
+```
+
+```{r}
+####### RANDOM FOREST ##########
+library(randomForest)
+library(caret)
+set.seed(123)
+
+#numFolds <- trainControl(method="cv", number=5)
+#rf.caret <- train(Popular ~. - UniqueID, data=news.train, method='rf', na.action=na.exclude, trControl=numFolds)
+#rf.caret
+rf = randomForest(Popular ~ . - UniqueID, data=news.train, ntree=500, nodesize=20, mtry=10, na.action=na.roughfix)
+
+
+```
+```{r}
+PredAllRFTrain = predict(rf,type="prob")
+predRF = PredAllRFTrain[ ,2]
+library(ROCR)
+ROCR = prediction(predRF, news.train$Popular)
+# AUC
+as.numeric(performance(ROCR, "auc")@y.values) # 0.7616105 # 0.8777504 # 0.9151453 # 0.9188326
+```
+
+```{r}
+PredAllRFTest = predict(rf, newdata = news.test,type="prob")
+MySubmission = data.frame(UniqueID = Test$UniqueID, Probability1 = PredAllRFTest[ ,2])
+write.csv(MySubmission, "TheRF.csv", row.names=FALSE)
+```
+
+```{r}
+##### Utilisation de la methode crossvalidation
+library(caret)
+
+set.seed(123)
+numFolds <- trainControl(method="cv", number=10)
+grid <- expand.grid(mtry=12)
+rf2 = randomForest(Popular ~ . - UniqueID, data=news.train, method="rf", trControl=numFolds, tuneGrid=grid, na.action=na.roughfix, importance = TRUE)
+#rf2$importance
+```
+```{r}
+PredAllRFTrain = predict(rf2, type="prob")
+predRF = PredAllRFTrain[ ,2]
+library(ROCR)
+ROCR = prediction(predRF, news.train$Popular)
+# AUC
+as.numeric(performance(ROCR, "auc")@y.values) # 0.918273 # 0.9289191 || #0.9235416
+```
+```{r}
+PredAllRFTest = predict(rf2, newdata = news.test,type="prob")
+MySubmission = data.frame(UniqueID = Test$UniqueID, Probability1 = PredAllRFTest[ ,2])
+write.csv(MySubmission, "TheRF_Counter_First.csv", row.names=FALSE)
+```
+```{r}
+plot(rf2$err.rate[, 1], type = "l", xlab = "nombre d'arbres", ylab = "erreur OOB")
+```
+```{r}
+
+```
+
+```{r}
+#### Test SVM ###########"
+library(e1071) # LIBRAIRIE SVM
+set.seed(123)
+
+TestSVM = svm(Popular ~ . - UniqueID, data=news.train)
+TestSVM
+```
+
+```{r}
+#training set predictions
+pred_train <-predict(TestSVM, news.train$Popular)
+mean(pred_train==news.train$Popular)
+
+```
+
+```{r}
+library(rpart)
+R3 = rpart(Popular~., data=news.train, method="class",cp=0.0003)
+
+```
+```{r}
+
+PredAllRFTrain = predict(R3, type="prob")
+predRF = PredAllRFTrain[ ,2]
+library(ROCR)
+ROCR = prediction(predRF, news.train$Popular)
+# AUC
+as.numeric(performance(ROCR, "auc")@y.values) # 0.9383963
+```
+
+```{r}
+##### KNN ########
+R4 = knn3(Popular~. , data=news.train,na.action=na.roughfix,  k=20)
+```
+
+```{r}
+###### Gradient Boost Model #########
+library(gbm)
+#news.train$Popular = as.numeric(as.character(news.train$Popular))
+#news.train$Popular = (news.train$Popular-2)/2
+R5 = gbm((unclass(Popular)-1)~., data=news.train,n.trees=15000,interaction.depth=3,shrinkage=0.001,distribution="bernoulli")
+print(R5)
+```
+```{r}
+## work around bug in gbm 2.1.1
+predict.gbm <- function (object, newdata, n.trees, type = "link", single.tree = FALSE, ...) {
+  if (missing(n.trees)) {
+    if (object$train.fraction < 1) {
+      n.trees <- gbm.perf(object, method = "test", plot.it = FALSE)
+    }
+    else if (!is.null(object$cv.error)) {
+      n.trees <- gbm.perf(object, method = "cv", plot.it = FALSE)
+    }
+    else {
+      n.trees <- length(object$train.error)
+    }
+    cat(paste("Using", n.trees, "trees...\n"))
+    gbm::predict.gbm(object, newdata, n.trees, type, single.tree, ...)
+  }
+}
+```
+
+```{r}
+PredAllRFTrain = predict(R5, type= "response")
+#print(PredAllRFTrain)
+predRF = PredAllRFTrain
+library(ROCR)
+ROCR = prediction(predRF, news.train$Popular)
+# AUC
+as.numeric(performance(ROCR, "auc")@y.values) # 0.9367616
+```
+
+
+
