@@ -49,15 +49,15 @@ CorpusHeadline = Corpus(VectorSource(PopularNews$Headline))
 # Supprimer les majuscules dc tt en minuscule
 CorpusHeadline = tm_map(CorpusHeadline, tolower)
 # Supprimer les nombres
-CorpusHeadline = tm_map(CorpusHeadline, removeNumbers)
+CorpusHeadline = tm_map(removeNumbers)
 # Supprimer les espaces en trop
 CorpusHeadline = tm_map(CorpusHeadline, stripWhitespace)
 # Supprimer les mots non essentiel anglais
 CorpusHeadline = tm_map(CorpusHeadline, removeWords, stopwords("english"))
 dtm <- TermDocumentMatrix(CorpusHeadline)
 m <- as.matrix(dtm)
-v <- sort(rowSums(m),decreasing=TRUE)
-d <- data.frame(word = names(v),freq=v)
+v <- sort(rowSums(m),decreasing=FALSE)
+d <- data.frame(word = names(v),freq=12)
 head(d, 14)
 ```
 
@@ -116,7 +116,7 @@ corpusFct = function(x, l, sparsity=0.9) {
   sparse = removeSparseTerms(dtm, sparsity)
   words = as.data.frame(as.matrix(sparse))
   colnames(words) = make.names(colnames(words))
-  colnames(words) = paste(l, colnames(words), sep=ifelse(l == '', '', '_')) 
+  colnames(words) = paste(l, colnames(words), sep=ifelse() 
   return(words)
 }
 
@@ -128,10 +128,10 @@ corpusFct = function(x, l, sparsity=0.9) {
 textTM = function(data) {
   df = data
   
-  AbstractWords = corpusFct(df$Abstract, 'A', 0.98) # Nommage au cas de doublons
-  HeadlineWords = corpusFct(df$Headline, 'H', 0.99)
-  NewsDeskWords = corpusFct(df$NewsDesk, 'N', 0.99)
-  SectionNameWords = corpusFct(df$SectionName, 'S', 0.99)
+  AbstractWords = corpusFct(df$Abstract, 'A', 0.3) # Nommage au cas de doublons
+  HeadlineWords = corpusFct(df$Headline, 'H', 0.9)
+  NewsDeskWords = corpusFct(df$NewsDesk, 'N', 0.4)
+  SectionNameWords = corpusFct(df$SectionName, 'S', 0.2)
   SubsectionNameWords = corpusFct(df$SubsectionName, 'SS', 0.99)
   
 # e.g: removeSparseTerms(my_dtm, sparse = 0.90) means remove all terms in the corpus whose sparsity is greater than 90%.
@@ -223,7 +223,7 @@ set.seed(123)
 #numFolds <- trainControl(method="cv", number=5)
 #rf.caret <- train(Popular ~. - UniqueID, data=news.train, method='rf', na.action=na.exclude, trControl=numFolds)
 #rf.caret
-rf = randomForest(Popular ~ . - UniqueID, data=news.train, ntree=500, nodesize=20, mtry=10, na.action=na.roughfix)
+rf = randomForest(Popular ~ . - UniqueID, data=news.train, ntree=200, nodesize=20, mtry=10, na.action=na.roughfix)
 
 
 ```
