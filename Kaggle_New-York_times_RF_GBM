@@ -81,7 +81,7 @@ addVariables = function(data){
   # Identifier si le Headline est une question
   # Ajout de Question => variable catégoriel 
   df$Headline = tolower(df$Headline)
-  df$Question = as.numeric(grepl('\\?|what|why|how|should|when|can', df$Headline, perl = T))
+  df$Question = as.numeric(grepl('\\?|what|why|how|would|should|when|can', df$Headline, perl = T))
   
   # Mots clés sensationnel dans le Headlines
   df$Sensationnel = as.numeric(grepl('\\?|obama|scandal|gun|climate|report|new|news|can|ask|republicans', df$Headline, perl = T))
